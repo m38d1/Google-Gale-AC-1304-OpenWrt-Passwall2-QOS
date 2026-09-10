@@ -1,0 +1,6 @@
+#!/bin/sh
+# netmon: load ifb module, enable cron, wire nft table on first boot
+modprobe ifb 2>/dev/null || true
+/etc/init.d/cron enable >/dev/null 2>&1 || true
+/etc/init.d/cron restart >/dev/null 2>&1 || true
+exit 0

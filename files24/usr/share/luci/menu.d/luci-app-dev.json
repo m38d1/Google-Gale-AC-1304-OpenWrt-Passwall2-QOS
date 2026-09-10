@@ -1,0 +1,6 @@
+{
+    "admin/dev": {
+        "title": "Developer",
+        "order": 60
+    }
+}

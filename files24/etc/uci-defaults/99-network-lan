@@ -1,0 +1,6 @@
+#!/bin/sh
+# LAN IP = 192.168.10.1
+uci -q set network.lan.proto='static'
+uci -q set network.lan.ipaddr='192.168.10.1'
+uci -q set network.lan.netmask='255.255.255.0'
+uci -q commit network

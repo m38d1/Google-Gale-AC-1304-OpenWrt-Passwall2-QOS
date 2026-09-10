@@ -1,0 +1,42 @@
+# netmon: per-device traffic monitoring + quota/time enforcement
+set nm_up {
+    type ipv4_addr
+    size 65535
+    flags dynamic,timeout
+    counter
+    timeout 1d
+}
+set nm_down {
+    type ipv4_addr
+    size 65535
+    flags dynamic,timeout
+    counter
+    timeout 1d
+}
+set nm_qup {
+    type ipv4_addr
+    size 65535
+    flags dynamic
+    counter
+}
+set nm_qdown {
+    type ipv4_addr
+    size 65535
+    flags dynamic
+    counter
+}
+set nm_block {
+    type ipv4_addr
+}
+chain nm_control {
+    type filter hook forward priority filter - 1; policy accept;
+    ip saddr @nm_block drop
+    ip daddr @nm_block drop
+}
+chain nm_monitor {
+    type filter hook forward priority filter; policy accept;
+    oifname "br-lan" update @nm_down { ip daddr }
+    iifname "br-lan" update @nm_up { ip saddr }
+    iifname "br-lan" update @nm_qup { ip saddr }
+    oifname "br-lan" update @nm_qdown { ip daddr }
+}

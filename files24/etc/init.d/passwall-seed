@@ -1,0 +1,13 @@
+#!/bin/sh /etc/rc.common
+# Re-seeds PassWall1's manual Direct/Block lists on every boot (idempotent),
+# so entries survive a luci-app-passwall package upgrade that resets the files.
+START=15
+STOP=85
+
+start() {
+	/root/passwall-seed.sh
+}
+
+stop() {
+	return 0
+}

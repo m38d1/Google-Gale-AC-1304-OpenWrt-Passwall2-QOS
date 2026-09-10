@@ -1,0 +1,10 @@
+{
+    "admin/dev/netmon": {
+        "title": "Network Speed",
+        "action": {
+            "type": "view",
+            "path": "netmon/monitor"
+        },
+        "order": 2
+    }
+}

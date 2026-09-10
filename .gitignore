@@ -1,0 +1,13 @@
+# Exclude any backup that contains private node data
+*pre-v161-backup.tar.gz
+*pre-v16-backup.tar.gz
+# Exclude local build artefacts
+*.log
+*.tmp
+*.swp
+*.swo
+*.zip
+*.tar.gz
+# Exclude .DS_Store and other OS-specific files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,6 @@
+#!/bin/sh
+# First-boot: seed PassWall1 manual lists (Iran-direct + ad-block) and enable
+# the boot-time re-seeder.
+/root/passwall-seed.sh
+/etc/init.d/passwall-seed enable
+exit 0

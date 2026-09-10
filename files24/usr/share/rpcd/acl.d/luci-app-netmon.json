@@ -1,0 +1,27 @@
+{
+    "luci-app-netmon": {
+        "description": "Network Speed Monitor access",
+        "read": {
+            "file": {
+                "/root/netmon/*": [ "list", "read" ],
+                "/usr/sbin/nft": [ "exec" ],
+                "/bin/date": [ "exec" ],
+                "/bin/sh": [ "exec" ],
+                "/proc/net/arp": [ "read" ]
+            },
+            "ubus": {
+                "file": [ "list", "read", "exec" ],
+                "luci-rpc": [ "getDHCPLeases", "getHostHints" ],
+                "system": [ "board", "info" ]
+            }
+        },
+        "write": {
+            "file": {
+                "/root/netmon/*": [ "write", "read", "list", "exec" ]
+            },
+            "ubus": {
+                "file": [ "exec", "write" ]
+            }
+        }
+    }
+}

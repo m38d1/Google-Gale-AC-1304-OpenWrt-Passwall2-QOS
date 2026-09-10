@@ -1,0 +1,3 @@
+* * * * * /root/netmon/enforce.sh >/dev/null 2>&1
+0 0 * * * /root/netmon/reset.sh >/dev/null 2>&1
+* * * * * /root/netled.sh >/dev/null 2>&1

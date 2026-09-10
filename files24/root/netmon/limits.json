@@ -1,0 +1,8 @@
+{
+  "__global_settings": {
+    "max_dl": 12500,
+    "max_ul": 12500,
+    "lan_if": "br-lan",
+    "wan_if": "wan"
+  }
+}

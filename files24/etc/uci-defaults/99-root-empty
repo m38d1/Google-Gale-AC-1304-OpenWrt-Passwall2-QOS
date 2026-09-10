@@ -1,0 +1,10 @@
+#!/bin/sh
+# Ensure root has NO password so users can log in without typing one.
+# OpenWrt ships with an empty root password by default; this makes it
+# explicit and survives any future firstboot/uci changes.
+if [ -f /etc/shadow ]; then
+	sed -i 's/^root:[^:]*/root:/' /etc/shadow
+fi
+# busybox passwd -d is the canonical clear; sed above is the reliable fallback.
+passwd -d root >/dev/null 2>&1 || true
+exit 0

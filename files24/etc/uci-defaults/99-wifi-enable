@@ -1,0 +1,16 @@
+#!/bin/sh
+# Both bands: same SSID, open, enabled
+[ -f /etc/config/wireless ] || wifi config
+uci -q set wireless.radio0.disabled='0'
+uci -q set wireless.radio0.channel='11'
+uci -q set wireless.radio0.htmode='HT20'
+uci -q set wireless.default_radio0.ssid='Google Router'
+uci -q set wireless.default_radio0.encryption='none'
+uci -q set wireless.default_radio0.disabled='0'
+uci -q set wireless.radio1.disabled='0'
+uci -q set wireless.radio1.channel='36'
+uci -q set wireless.radio1.htmode='VHT80'
+uci -q set wireless.default_radio1.ssid='Google Router'
+uci -q set wireless.default_radio1.encryption='none'
+uci -q set wireless.default_radio1.disabled='0'
+uci commit wireless
