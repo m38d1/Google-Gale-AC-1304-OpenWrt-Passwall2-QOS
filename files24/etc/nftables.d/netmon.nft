@@ -1,4 +1,13 @@
 # netmon: per-device traffic monitoring + quota/time enforcement
+#
+# Accounting hooks (v16.2 fix):
+#   PassWall REDIRECTs client traffic to the local xray port (192.168.10.1:1041),
+#   so proxied packets are delivered/originated LOCALLY and never traverse the
+#   forward hook. To count ALL client traffic (direct + proxied):
+#     - upload   -> prerouting  (sees packets from clients before redirect)
+#     - download -> postrouting (sees forwarded replies AND locally originated
+#                   xray replies sent back to LAN clients)
+#   Small router<->client chatter (DNS/LuCI API) is also counted; negligible.
 set nm_up {
     type ipv4_addr
     size 65535
@@ -28,15 +37,32 @@ set nm_qdown {
 set nm_block {
     type ipv4_addr
 }
+
+# ---- blocking (must cover the proxied path too) ----
 chain nm_control {
     type filter hook forward priority filter - 1; policy accept;
     ip saddr @nm_block drop
     ip daddr @nm_block drop
 }
-chain nm_monitor {
-    type filter hook forward priority filter; policy accept;
-    oifname "br-lan" update @nm_down { ip daddr }
-    iifname "br-lan" update @nm_up { ip saddr }
-    iifname "br-lan" update @nm_qup { ip saddr }
-    oifname "br-lan" update @nm_qdown { ip daddr }
+chain nm_control_pre {
+    type filter hook prerouting priority filter - 1; policy accept;
+    iifname "br-lan" ip saddr @nm_block drop
+}
+chain nm_control_post {
+    type filter hook postrouting priority filter - 1; policy accept;
+    oifname "br-lan" ip daddr @nm_block drop
+}
+
+# ---- accounting ----
+# exclude special addresses (0.0.0.0 = DHCP DISCOVER src, 255.255.255.255 =
+# DHCP broadcast dst) so only real client IPs enter the sets.
+chain nm_acc_up {
+    type filter hook prerouting priority filter; policy accept;
+    iifname "br-lan" ip saddr != { 0.0.0.0, 255.255.255.255 } update @nm_up { ip saddr }
+    iifname "br-lan" ip saddr != { 0.0.0.0, 255.255.255.255 } update @nm_qup { ip saddr }
+}
+chain nm_acc_down {
+    type filter hook postrouting priority filter; policy accept;
+    oifname "br-lan" ip daddr != { 0.0.0.0, 255.255.255.255 } update @nm_down { ip daddr }
+    oifname "br-lan" ip daddr != { 0.0.0.0, 255.255.255.255 } update @nm_qdown { ip daddr }
 }

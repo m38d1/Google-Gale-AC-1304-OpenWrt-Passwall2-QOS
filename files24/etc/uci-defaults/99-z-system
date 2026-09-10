@@ -1,0 +1,11 @@
+#!/bin/sh
+# Router identity: hostname + Tehran timezone.
+# (The "Google Router Direct" second SSID and its isolated 192.168.11.0/24
+#  network were removed in v16.3 at the user's request.)
+
+uci -q set system.@system[0].hostname='Google'
+uci -q set system.@system[0].zonename='Asia/Tehran'
+uci -q set system.@system[0].timezone='IRST-3:30'
+
+uci commit system
+exit 0

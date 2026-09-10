@@ -11,25 +11,6 @@ RULES=/usr/share/passwall/rules
 SEED=/etc/passwall-seed
 [ -d "$RULES" ] || exit 0
 
-# --- Direct SSID (Google Router Direct, 192.168.11.0/24) must bypass PassWall.
-# PassWall's global "default" rules proxy EVERY interface (no iifname filter),
-# so we inject a return for the direct subnet at the top of its chains. This is
-# also re-applied here so an apk upgrade of luci-app-passwall self-heals.
-NFS=/usr/share/passwall/nftables.sh
-if [ -f "$NFS" ] && ! grep -qs 'direct-bypass' "$NFS" 2>/dev/null; then
-	awk '
-	  /^\t\tmsg="【默认】，"/ && !done {
-	    print "\t\tnft \"insert rule $NFTABLE_NAME PSW_MANGLE ip saddr 192.168.11.0/24 counter return comment \\\"direct-bypass\\\"\""
-	    print "\t\tnft \"insert rule $NFTABLE_NAME PSW_MANGLE_V6 iifname \\\"br-direct\\\" counter return comment \\\"direct-bypass\\\"\""
-	    print "\t\tnft \"insert rule $NFTABLE_NAME PSW_NAT ip saddr 192.168.11.0/24 counter return comment \\\"direct-bypass\\\"\""
-	    print "\t\tnft \"insert rule $NFTABLE_NAME PSW_DNS ip saddr 192.168.11.0/24 counter return comment \\\"direct-bypass\\\"\""
-	    print "\t\t#seed-direct-bypass"
-	    done=1
-	  }
-	  { print }
-	' "$NFS" > "$NFS.tmp" && mv "$NFS.tmp" "$NFS"
-fi
-
 # --- Direct IP: every Iranian IP range (expanded from geoip.dat 'IR') ---
 if ! grep -qs '#seed-iran-ip' "$RULES/direct_ip" 2>/dev/null; then
 	printf '\n#seed-iran-ip\n' >> "$RULES/direct_ip"

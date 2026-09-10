@@ -1,55 +1,42 @@
-# راهنمای فلش v16.1 — OpenWrt 24.10.8 + PassWall سبک + ایران‌دایرکتِ لیست‌دستی
+# راهنمای فلش v16.3 — OpenWrt 24.10.8 + PassWall سبک + ایران‌دایرکتِ لیست‌دستی
 
 ## فایل
-- `~/owrt_build/output/v16.1-24.10.8-sysupgrade.bin` (۲۱,۶۲۷,۹۵۳ بایت)
-- sha256: `e5d0b195005a20a9a5098af380a00b7f6211268d8d57d1f5d96ce9460ad48f5d`
+- `v16.3-24.10.8-sysupgrade.bin` (۲۱٬۶۱۷٬۷۱۳ بایت)
+- sha256: `7e3d686a8df26cec385ee8c29e61cdd5c22b16aa4d309256693dee6fe3d0267b`
 - پایه: رسمی `openwrt-24.10.8-ipq40xx-chromium` (kernel `6.6.144`)، پروفایل `google_wifi` (Gale)
-- v16 قدیمی (`v16-24.10.8-sysupgrade.bin`) = همان ایمیجِ بدون تنظیمات بذری‌شدهٔ PassWall؛ v16.1 جایگزینش می‌شود
+- v16/v16.1/v16.2 جایگزین‌شده با همین فایل
 
 ## داخل چیست
 | بخش | وضعیت |
 |---|---|
 | PassWall v1 | `26.9.9-r1` — تنظیمات آمادهٔ بذری‌شده (`zz-passwall-tuned`: DNS shunt=chinadns-ng، tcp/udp=proxy، localhost_proxy، پورت‌ها، ۶ shunt_rule) — **خاموش و بدون نود** |
-| هستهٔ پروکسی | فقط `xray-core 26.9.8` (سبک؛ بدون sing-box/ssr/hysteria/geoip) |
+| هستهٔ پروکسی | فقط `xray-core 26.9.9` (سبک؛ بدون sing-box/ssr/hysteria/geoip) |
 | ایران‌دایرکت | ۲۷۷۲ CIDR + ۳۶۵ دامنه، بذری‌شده در `rules/direct_ip` و `direct_host` (خودترمیم در هر بوت) |
 | تبلیغات | `block_host` با لیست seed |
-| netmon | سهمیه/بازهٔ زمانی per-IP (`tc`+`nft`) — `wan_if=wan` |
-| netled | چراغ RGB: آبی/سبز/قرمز |
-| SSID | `Google Router` (هر دو باند، باز) + `Google Router Direct` (۱۹۲.۱۶۸.۱۱.۰/۲۴، همیشه مستقیم) |
+| netmon | سهمیه/بازهٔ زمانی per-IP (`tc`+`nft`) — **شمارش از `prerouting`/`postrouting` تا ترافیک پروکسی‌شده هم درست حساب شود (رفع v16.3)**؛ آدرس‌های خاص (0.0.0.0/255.255.255.255) فیلترند |
+| netled | چراغ RGB: آبی/سبز/قرمز (curl با `-4`) |
+| SSID | فقط `Google Router` (هر دو باند) — SSID دوم Direct در v16.3 حذف شد |
 | LAN | ۱۹۲.۱۶۸.۱۰.۱ · رمز root: خالی · hostname: `Google` · timezone: تهران |
-| منوها | LuCI: `Developer` (والد) → `Network Speed` (بدون زیرمنوی changelog) |
+| منوها | LuCI: `Developer` (والد) → `Network Speed` |
 | فوتر LuCI | `… / Developered by Mehdi Askari` — لینک به `https://mehdiaskari.ir` |
 
 ## فلش
-- **روی v16/v16.1 فعلی (همان opkg 24.10):** بدون `-n` — کانفیگ می‌ماند:
+- **روی v16/v16.1/v16.3 (opkg 24.10):** بدون `-n` — کانفیگ و نودها می‌مانند:
 ```sh
-scp -i ~/.ssh/id_ed25519 ~/owrt_build/output/v16.1-24.10.8-sysupgrade.bin root@192.168.10.1:/tmp/v161.bin
-ssh -i ~/.ssh/id_ed25519 root@192.168.10.1 "sysupgrade /tmp/v161.bin"
+scp -O -i ~/.ssh/id_ed25519 v16.3-24.10.8-sysupgrade.bin root@192.168.10.1:/tmp/v162.bin
+ssh -i ~/.ssh/id_ed25519 root@192.168.10.1 "sysupgrade /tmp/v162.bin"
 ```
-- **روی 25.12.5 (apk):** حتماً با `-n` (پاک‌سازی کانفیگ):
-```sh
-ssh -i ~/.ssh/id_ed25519 root@192.168.10.1 "sysupgrade -n /tmp/v161.bin"
-```
+- **روی 25.12.5 (apk):** حتماً با `-n` (پاک‌سازی کانفیگ).
 - روتر ۲-۳ دقیقه ریبوت می‌شود؛ SSID و LAN ثابت می‌مانند.
+- اگر اینترنت بعد از بوت تا ~۱ دقیقه take نکرد، یک `service passwall restart` کافی است (balancer تازه سرور را انتخاب کند).
 
 ## بعد از فلش (فقط این‌ها دستی است)
-1. `ssh root@192.168.10.1` (بدون رمز؛ اولین اتصال: `StrictHostKeyChecking=accept-new`)
-2. کلید SSH ما را برگردان: کلید عمومی `~/.ssh/id_ed25519.pub` را به `/etc/dropbear/authorized_keys` اضافه کن
-3. نودها را دستی در LuCI اضافه کن (VLESS Reality دبی/ترکیه/ایتالیا — مشخصات در `~/owrt_build/backup/pre-v16-backup.tar.gz` → `etc/config/passwall`)، Balancer را نود اصلی کن، بعد PassWall را enable کن
-4. تست: `curl -I https://www.google.com` از LAN؛ چراغ باید آبی شود
+1. `ssh root@192.168.10.1` (بدون رمز)
+2. کلید عمومی `~/.ssh/id_ed25519.pub` را به `/etc/dropbear/authorized_keys` اضافه کن
+3. نودها را در LuCI اضافه کن (VLESS Reality دبی/ترکیه/ایتالیا + Balancer اصلی) و PassWall را enable کن — گاردِ `zz-passwall-tuned` در آپگریدِ keep-config نودهای موجود را پاک نمی‌کند
+4. تست: `curl -4 -I https://www.google.com` از LAN؛ چراغ آبی؛ صفحهٔ Network Speed باید ترافیک همه (حتی یوتیوب تلویزیون) را زنده نشان دهد
 
-## نسبت به v15 چه عوض شد
-- سبک‌تر: بدون sing-box/ssr/hysteria/naive/v2ray-geoip… (روت‌فس ~۱۸MB در برابر ۵۸MB) → فضای overlay خیلی بیشتر
-- پایهٔ رسمی 24.10.8 به‌جای 25.12.5 (کرنل سبک‌تر 6.6، اکوسیستم opkg پایدار)
-- حذف وصلهٔ `header.ut` (وابسته به LuCI 25.12 بود) — منوهای netmon/dev با JSON کار می‌کنند
-- `limits.json` و fallback های netmon از `phy0-sta0` به `wan` (WAN سیمی فعلی)
-
-## نکتهٔ مهم دربارهٔ نودها (به‌روز شد ۱۴۰۵/۰۶/۱۹)
-- `add-nodes-v16.sh` منسوخ شد — نود UK (`ukm`) غلط بود.
-- کانفیگ کامل PassWall از بکاپ پیش از فلش (`~/owrt_build/backup/pre-v16-backup.tar.gz`) بازگردانده شد: نودهای واقعی **دبی/ترکیه/ایتالیا** + نود اصلی **Balancer (leastLoad)**، `transport='raw'` بدون flow.
-- تست انجام‌شده روی روتر پس از فلش: خروجی خارجی از نود (ترکیه `87.120.106.241`)، aparat/digikala/bmi مستقیم و باز، IP آپارات در ست `psw_white` و قانون `return` مسیر مستقیم فعال — با نود روشن، ایران‌دایرکت کار می‌کند.
-
-## این نسخه چه چیزی را عوض نکرد
-- رمز WAN سیمی و توپولوژی شبکه (هنوز ۱۹۲.۱۶۸.۱.۱ بالا-دست است)
-- نودها/گذرواژه‌های قبلی (با `-n` پاک می‌شوند؛ از اسکریپت نودها برمی‌گردند)
-- AdGuard Home نصب نمی‌شود (مسدودسازی فقط با لیست seed در PassWall)
+## نکته‌ها
+- WAN سیمی یا بی‌سیم (`phy0-sta0`): هر دو کار می‌کنند؛ شمارش netmon روی `br-lan` است و مستقل از مسیر خروجی.
+- `add-nodes-v16.sh` منسوخ (نود UK غلط) — نودها از بکاپ محلی `~/owrt_build/backup/pre-v16-backup.tar.gz`.
+- فاکتوری‌ریست = همه‌چیز برمی‌گردد به تنظیمات this build؛ فقط نودها دوباره دستی.
