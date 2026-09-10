@@ -11,3 +11,6 @@
 # Exclude .DS_Store and other OS-specific files
 .DS_Store
 Thumbs.db
+
+# Firmware binaries are attached to GitHub Releases, not tracked
+*.bin
