@@ -21,7 +21,8 @@ permissions:
 
 env:
   OPENWRT_RELEASE: '24.10.8'
-  TARGET: 'ipq40xx/chromium'
+  TARGET_PATH: 'ipq40xx/chromium'   # slash: the URL path
+  TARGET_NAME: 'ipq40xx-chromium'   # dash: the asset filename
   PROFILE: 'google_wifi'
   # opkg architecture string; also the PassWall2 release asset suffix
   PKG_ARCH: 'arm_cortex-a7_neon-vfpv4'
@@ -54,13 +55,16 @@ jobs:
       - name: Fetch ImageBuilder
         run: |
           set -euo pipefail
-          URL="https://downloads.openwrt.org/releases/${OPENWRT_RELEASE}/targets/${TARGET}"
-          IB="openwrt-imagebuilder-${OPENWRT_RELEASE}-${TARGET}.Linux-x86_64.tar.zst"
+          URL="https://downloads.openwrt.org/releases/${OPENWRT_RELEASE}/targets/${TARGET_PATH}"
+          IB="openwrt-imagebuilder-${OPENWRT_RELEASE}-${TARGET_NAME}.Linux-x86_64.tar.zst"
+          echo "fetching $URL/$IB"
           curl -fSL --retry 5 -o "$IB" "$URL/$IB"
+          # The published sha256sums marks binaries with a '*' before the name
+          # ("<sum> *<file>"), so match on the field rather than on a pattern.
           curl -fSL --retry 5 -o sha256sums "$URL/sha256sums"
-          grep " $IB\$" sha256sums | sed "s|$IB||" | sha256sum -c -
+          awk -v f="$IB" '$2=="*"f || $2==f' sha256sums | sha256sum -c -
           tar --zstd -xf "$IB"
-          mv "openwrt-imagebuilder-${OPENWRT_RELEASE}-${TARGET}.Linux-x86_64" imagebuilder
+          mv "openwrt-imagebuilder-${OPENWRT_RELEASE}-${TARGET_NAME}.Linux-x86_64" imagebuilder
           echo "ImageBuilder ready"
 
       - name: Verify the profile exists
@@ -245,7 +249,7 @@ jobs:
             echo "|---|---|"
             echo "| device | Google Wifi (Gale) |"
             echo "| profile | \`$PROFILE\` |"
-            echo "| base | $TARGET · OpenWrt $OPENWRT_RELEASE |"
+            echo "| base | $TARGET_PATH · OpenWrt $OPENWRT_RELEASE |"
             echo "| core | Xray $XRAY_VERSION (feed ships 25.1.30, too old) |"
             echo "| proxy | PassWall2 $PASSWALL2_VERSION · Iran-direct shunt |"
             echo
