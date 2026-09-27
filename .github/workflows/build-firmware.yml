@@ -45,6 +45,7 @@ jobs:
       - name: Resolve tag
         id: tag
         run: |
+          set -euo pipefail
           TAG="${{ inputs.tag || github.ref_name }}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "building $TAG"
@@ -89,48 +90,57 @@ jobs:
       #    The newer core is dropped in via FILES=, which prepare_rootfs copies
       #    AFTER package_install, so it overwrites the packaged binary.
       # ------------------------------------------------------------------
-      - name: Fetch and stage Xray ${XRAY_VERSION}
+      - name: Fetch and stage Xray
         run: |
           set -euo pipefail
           URL="https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/${XRAY_ASSET}"
+          echo "fetching $URL"
           curl -fSL --retry 5 -o xray.zip "$URL"
           echo "${XRAY_SHA256}  xray.zip" | sha256sum -c -
-          rm -rf xray-x && mkdir xray-x
+          rm -rf xray-x
+          mkdir -p xray-x stage/usr/bin
           unzip -q xray.zip -d xray-x
-          mkdir -p stage/usr/bin
           # only the binary: the geo files in the zip are the upstream ones,
           # which have no "ir" category
           install -m 0755 xray-x/xray stage/usr/bin/xray
-          file stage/usr/bin/xray
+          ls -l stage/usr/bin/xray
 
       - name: Check the core is new enough and built for the right CPU
         run: |
           set -euo pipefail
           # This is a cross build: the runner is x86_64 and the target is
           # ARMv7, so the staged binary must NOT be executed here.
-          # Compare the pinned version instead, and inspect the ELF header.
+          # Compare the pinned version instead, and read the ELF header.
           echo "pinned xray ${XRAY_VERSION}, need >= ${XRAY_MIN}"
           if [ "$(printf '%s\n%s\n' "${XRAY_MIN}" "${XRAY_VERSION}" | sort -V | head -1)" != "${XRAY_MIN}" ]; then
             echo "::error::xray ${XRAY_VERSION} is older than the required ${XRAY_MIN}"
             exit 1
           fi
-          file stage/usr/bin/xray | grep -qi 'ARM' \
-            || { echo "::error::staged xray is not an ARM binary"; file stage/usr/bin/xray; exit 1; }
-          file stage/usr/bin/xray | grep -q 'ELF 32-bit' \
-            || { echo "::error::staged xray is not 32-bit; the Gale is ARMv7"; exit 1; }
-          echo "xray ${XRAY_VERSION} accepted"
+          # ELF header, read with od so this does not depend on file(1) being
+          # present: magic \x7fELF, EI_CLASS 1 = 32-bit, e_machine 0x28 = ARM.
+          B=stage/usr/bin/xray
+          MAGIC=$(od -An -tx1 -N4  "$B" | tr -d ' \n')
+          CLASS=$(od -An -tu1 -j4 -N1  "$B" | tr -d ' \n')
+          MACH=$(od -An -tx1 -j18 -N2 "$B" | tr -d ' \n')
+          echo "ELF magic=${MAGIC} class=${CLASS} machine=${MACH}"
+          [ "$MAGIC" = "7f454c46" ] || { echo "::error::not an ELF binary"; exit 1; }
+          [ "$CLASS" = "1" ]         || { echo "::error::not 32-bit; the Gale is ARMv7"; exit 1; }
+          [ "$MACH"  = "2800" ]      || { echo "::error::not an ARM binary"; exit 1; }
+          echo "xray ${XRAY_VERSION} accepted (32-bit ARM)"
 
       # ------------------------------------------------------------------
       # 3. PassWall2 packages (not present in any official feed)
       # ------------------------------------------------------------------
-      - name: Fetch PassWall2 ${PASSWALL2_VERSION} packages
+      - name: Fetch PassWall2 packages
         run: |
           set -euo pipefail
           REL="https://github.com/Openwrt-Passwall/openwrt-passwall2/releases/download/${PASSWALL2_VERSION}-1"
+          echo "fetching ${REL}/packages_ipk_${PKG_ARCH}.zip"
           curl -fSL --retry 5 -o pw2.zip "${REL}/packages_ipk_${PKG_ARCH}.zip"
           curl -fSL --retry 5 -o luci-app-passwall2.ipk \
             "${REL}/luci-app-passwall2_${PASSWALL2_VERSION}-r1_all.ipk"
-          rm -rf pw2 && mkdir pw2
+          rm -rf pw2
+          mkdir -p pw2 imagebuilder/packages
           unzip -q pw2.zip -d pw2
           cp pw2/*.ipk luci-app-passwall2.ipk imagebuilder/packages/
           (cd imagebuilder/packages && ls -1 *.ipk | sort > ../staged.list)
@@ -172,6 +182,8 @@ jobs:
           chmod 0755 stage/etc/uci-defaults/* stage/root/*.sh 2>/dev/null || true
           find stage -type f | sort | tee /tmp/staged-files.txt
           echo "--- $(wc -l < /tmp/staged-files.txt) files staged ---"
+          echo "--- overlay plus the core override ---"
+          ls -l stage/usr/bin/xray
 
       - name: Lint the overlay before building
         run: |
@@ -229,22 +241,20 @@ jobs:
             echo "device \`$PROFILE\` · $TARGET_PATH · OpenWrt $OPENWRT_RELEASE · Xray $XRAY_VERSION · PassWall2 $PASSWALL2_VERSION"; \
           } > "$IMG.sha256.md"
 
-      - name: Prove the image carries what it must
+      - name: Sanity check the image before publishing it
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/out"
           IMG=$(ls -1 *sysupgrade.bin | head -1)
-          # A wrong-arch or truncated image is the failure that matters most and
-          # is invisible until someone flashes it, so sanity check what we can
-          # without booting: size, and the strings that identify the core.
+          # A truncated or wrong-arch image is the failure that stays invisible
+          # until someone flashes it, so check what we can without booting.
           SZ=$(wc -c < "$IMG")
           echo "size: $SZ bytes"
-          [ "$SZ" -gt 15000000 ] || { echo "::error::image looks truncated ($SZ bytes)"; exit 1; }
-          if strings -a "$IMG" | grep -q 'v8.8.8.8'; then
-            echo "image contains the preloaded geo rules"
-          else
-            echo "note: geo files are packaged, not preloaded; the build downloads them on first boot"
+          if [ "$SZ" -lt 15000000 ]; then
+            echo "::error::image looks truncated ($SZ bytes); the v16.3 build was ~21.6MB"
+            exit 1
           fi
+          echo "size check passed"
 
       # ------------------------------------------------------------------
       # 6. Publish
