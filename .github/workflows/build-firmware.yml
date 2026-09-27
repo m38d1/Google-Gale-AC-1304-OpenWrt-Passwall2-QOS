@@ -243,8 +243,12 @@ jobs:
           # dnsmasq is still an explicit request. The ImageBuilder Makefile
           # treats "-pkg" as "drop pkg from the package list", which is the
           # supported way to remove a default package.
+          # luci, not only luci-app-passwall2: the app depends on
+          # luci-base/luci-lib-* but not on the luci metapackage, and luci is
+          # what installs uhttpd and the admin modules. Without it the image
+          # ships the PassWall2 UI with no web server on 80/443.
           WANT="dnsmasq-full -dnsmasq kmod-nft-socket kmod-nft-tproxy curl \
-                ca-bundle ca-certificates xray-core"
+                ca-bundle ca-certificates xray-core luci"
           echo "packages=$WANT ${{ steps.indexed.outputs.names }}" \
             | tr -s ' ' >> "$GITHUB_OUTPUT"
           grep '^packages=' "$GITHUB_OUTPUT"
@@ -304,7 +308,13 @@ jobs:
             fi
             grep -q '^luci-app-passwall2 ' "$MAN" \
               || { echo "::error::PassWall2 is missing from the image"; exit 1; }
-            echo "manifest checks passed (dnsmasq-full yes, dnsmasq no, passwall2 yes)"
+            # luci-app-passwall2 does not depend on uhttpd, so an image can
+            # carry the whole PassWall2 UI and still have no web server.
+            grep -q '^uhttpd ' "$MAN" \
+              || { echo "::error::uhttpd is missing; the image has no LuCI web server"; exit 1; }
+            grep -q '^luci ' "$MAN" \
+              || { echo "::error::luci metapackage is missing"; exit 1; }
+            echo "manifest checks passed (dnsmasq-full yes, dnsmasq no, passwall2 yes, uhttpd+luci yes)"
           else
             echo "::warning::no manifest emitted; skipped the package assertions"
           fi
