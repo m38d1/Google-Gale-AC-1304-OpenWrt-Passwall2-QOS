@@ -142,9 +142,23 @@ jobs:
           rm -rf pw2
           mkdir -p pw2 imagebuilder/packages
           unzip -q pw2.zip -d pw2
-          cp pw2/*.ipk luci-app-passwall2.ipk imagebuilder/packages/
-          (cd imagebuilder/packages && ls -1 *.ipk | sort > ../staged.list)
-          echo "staged $(wc -l < ../staged.list) packages"
+
+          # Stage the whole PassWall2 package set. Earlier this was trimmed to
+          # the six packages this config happens to use today; the request is to
+          # keep everything, so all of them ship and nothing is dropped.
+          cp pw2/*.ipk imagebuilder/packages/
+          cp luci-app-passwall2.ipk imagebuilder/packages/
+
+          # An explicit path, not '../staged.list': a relative parent reference
+          # resolves against this step's cwd (the workspace), not against the
+          # subshell that wrote the file.
+          ls -1 imagebuilder/packages/*.ipk | sed 's|.*/||' | sort > imagebuilder/staged.list
+          # $(( )) around wc, because `wc -l < file` pads its output with
+          # leading spaces and a plain [ "$N" = 6 ] test then fails.
+          N=$(awk 'END{print NR}' imagebuilder/staged.list)
+          echo "staged $N packages"
+          [ "$N" -ge 2 ] || { echo "::error::only $N packages staged"; exit 1; }
+          sed 's/^/  /' imagebuilder/staged.list
 
       - name: Index staged packages and resolve their names
         id: indexed
@@ -219,9 +233,10 @@ jobs:
           # dnsmasq-full for nftset (stock dnsmasq is built without it, which
           # stops PassWall2's DNS instance and with it every lookup);
           # the tproxy modules; curl and CA certs for the LED probes; the cores
-          # from the official feed. geoview arrives with PassWall2.
+          # from the official feed. geoview and the geo data arrive with PassWall2;
+          # sing-box is left out because this config drives Xray only.
           WANT="dnsmasq-full kmod-nft-socket kmod-nft-tproxy curl ca-bundle \
-                ca-certificates xray-core sing-box"
+                ca-certificates xray-core"
           echo "packages=$WANT ${{ steps.indexed.outputs.names }}" \
             | tr -s ' ' >> "$GITHUB_OUTPUT"
           grep '^packages=' "$GITHUB_OUTPUT"
