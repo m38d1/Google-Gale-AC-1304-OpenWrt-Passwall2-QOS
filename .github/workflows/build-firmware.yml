@@ -235,8 +235,16 @@ jobs:
           # the tproxy modules; curl and CA certs for the LED probes; the cores
           # from the official feed. geoview and the geo data arrive with PassWall2;
           # sing-box is left out because this config drives Xray only.
-          WANT="dnsmasq-full kmod-nft-socket kmod-nft-tproxy curl ca-bundle \
-                ca-certificates xray-core"
+          # -dnsmasq: dnsmasq sits in this profile's DEFAULT_PACKAGES, and
+          # dnsmasq-full ships the same files, so asking opkg for both dies in
+          # package_install with check_data_file_clashes on /usr/sbin/dnsmasq
+          # and eight others. dnsmasq-full does declare PROVIDES:=dnsmasq, but
+          # PROVIDES only answers dependencies -- an explicit request for
+          # dnsmasq is still an explicit request. The ImageBuilder Makefile
+          # treats "-pkg" as "drop pkg from the package list", which is the
+          # supported way to remove a default package.
+          WANT="dnsmasq-full -dnsmasq kmod-nft-socket kmod-nft-tproxy curl \
+                ca-bundle ca-certificates xray-core"
           echo "packages=$WANT ${{ steps.indexed.outputs.names }}" \
             | tr -s ' ' >> "$GITHUB_OUTPUT"
           grep '^packages=' "$GITHUB_OUTPUT"
@@ -280,6 +288,26 @@ jobs:
             exit 1
           fi
           echo "size check passed"
+          # The package manifest is written by Image/Manifest into BIN_DIR, so
+          # the dnsmasq clash can be asserted on the artifact itself: if a
+          # future edit drops the -dnsmasq, or the profile gains a hard dnsmasq
+          # dependency, plain dnsmasq shows up here next to dnsmasq-full and
+          # the image ships a broken DNS. Assert both halves.
+          MAN=$(ls -1 *.manifest | head -1)
+          if [ -n "$MAN" ]; then
+            echo "manifest: $MAN"
+            grep -q '^dnsmasq-full ' "$MAN" \
+              || { echo "::error::dnsmasq-full is missing from the image"; exit 1; }
+            if grep -q '^dnsmasq ' "$MAN"; then
+              echo "::error::plain dnsmasq is installed alongside dnsmasq-full"
+              exit 1
+            fi
+            grep -q '^luci-app-passwall2 ' "$MAN" \
+              || { echo "::error::PassWall2 is missing from the image"; exit 1; }
+            echo "manifest checks passed (dnsmasq-full yes, dnsmasq no, passwall2 yes)"
+          else
+            echo "::warning::no manifest emitted; skipped the package assertions"
+          fi
 
       # ------------------------------------------------------------------
       # 6. Publish

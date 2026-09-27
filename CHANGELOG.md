@@ -1,3 +1,18 @@
+# ---------------------------------------------------------------------------
+# v18.1: the dnsmasq clash fix.
+#
+# v18 CI died in package_install every time:
+#     check_data_file_clashes: Package dnsmasq wants to install
+#     /usr/sbin/dnsmasq ... already provided by dnsmasq-full
+# dnsmasq sits in the google_wifi profile's DEFAULT_PACKAGES, and an explicit
+# opkg request for it is not satisfied by dnsmasq-full's PROVIDES (PROVIDES
+# only answers dependencies). PACKAGES now carries -dnsmasq, which the
+# ImageBuilder Makefile treats as "drop it from the list", so the image ships
+# dnsmasq-full alone. The post-build manifest check asserts dnsmasq-full is
+# in and plain dnsmasq is out. zz-deps' runtime swap stays for images
+# upgraded over v16/v18, where plain dnsmasq is already installed.
+# ---------------------------------------------------------------------------
+
 # v16.3: OpenWrt 24.10.8 for Google Wifi (Gale) — PassWall v1 light + netmon/netled
 #
 # ---------------------------------------------------------------------------

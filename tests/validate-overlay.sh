@@ -113,6 +113,11 @@ if [ -f "$W" ]; then
 	grep -q 'sha256sum -c' "$W" && ok "workflow verifies downloads" || bad "downloads are unverified"
 	grep -q 'FILES=' "$W" && ok "overlay is passed via FILES=" || bad "overlay not wired in"
 	grep -q 'sh -n' "$W" && ok "workflow lints the overlay" || bad "no overlay lint"
+	# dnsmasq is in the profile's DEFAULT_PACKAGES; without the -dnsmasq
+	# removal it is installed alongside dnsmasq-full and package_install
+	# dies on their shared files.
+	grep -q -- '-dnsmasq' "$W" && ok "workflow removes plain dnsmasq" \
+		|| bad "workflow does not remove plain dnsmasq; the dnsmasq-full file clash returns"
 fi
 
 printf '\n== result ==\n'
