@@ -1,3 +1,12 @@
+# v18.2: ship the web UI (luci/uhttpd) in the image.
+#
+# luci-app-passwall2 depends on luci-base and the luci libraries but not on
+# the luci metapackage, and luci is what installs uhttpd and the admin
+# modules. v18.1 therefore booted with PassWall2 files on disk and nothing
+# listening on 80/443; LuCI had to be opkg'd live and did not survive a
+# re-flash. WANT gains luci and the CI manifest assertion now rejects any
+# image without uhttpd.
+# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # v18.1: the dnsmasq clash fix.
 #
