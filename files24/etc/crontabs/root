@@ -1,0 +1,7 @@
+# Status indicator and uplink monitor. One line every minute each.
+# netled is deliberately a cron job rather than a resident loop: crond on
+# OpenWrt has one-minute granularity, so a 15s daemon would need its own
+# process for a status light. Keep the probes cheap (one ping, at most one
+# HTTP request) -- they run on a Cortex-A7 that is already NATing and proxying.
+* * * * * /root/netled.sh >/dev/null 2>&1
+* * * * * /root/uplink-watchdog.sh >/dev/null 2>&1

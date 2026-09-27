@@ -1,0 +1,109 @@
+#!/bin/sh
+# Dual wireless uplink with automatic failover.
+#
+#   primary  = /etc/v18.conf UPLINK1_*  -> lower metric, always preferred
+#   standby  = /etc/v18.conf UPLINK2_*  -> higher metric, kernel switches to
+#                                        it the moment the primary's default
+#                                        route disappears
+#
+# Settings live in /etc/v18.conf so the same firmware image can be deployed to
+# a different site without rebuilding: edit that one file over SSH.
+#
+# Why metrics and not a script that moves routes
+# ----------------------------------------------
+# The two uplands normally sit on DIFFERENT subnets (an LTE router on
+# 192.168.1.0/24, a home router on 192.168.0.0/24), so both can be up at once
+# without fighting over the gateway. The kernel then does the failover by
+# itself: lowest metric wins, and when an interface loses its carrier its
+# default route is deleted, so the other one takes over immediately. No polling
+# loop, no oscillation, no window where both routes are stale.
+#
+# If you ever configure both uplands into the SAME subnet, stop and think: two
+# devices would both claim to be the gateway, and the standby will silently
+# steal the default route from the primary.
+[ -e /etc/v18-uplink.applied ] && exit 0
+CONF=/etc/v18.conf
+[ -f "$CONF" ] || { echo "no $CONF, skipping uplink setup"; exit 0; }
+. "$CONF"
+
+[ -n "${UPLINK1_SSID:-}" ] || { echo "UPLINK1_SSID not set, skipping"; exit 0; }
+
+# ---------------------------------------------------------------- radio prep
+# A radio can only listen to one channel, and its AP plus every station share
+# it. So the band that carries a station uplink is pinned to that uplink's
+# channel. Doing this by hand is how you end up with an uplink that refuses to
+# associate: the driver rejects authentication outright when the target sits on
+# another channel ("Authentication request to the driver failed").
+sync_channel() {
+	_band="$1"; _want="$2"
+	[ -n "$_want" ] || return 0
+	_radio=$(uci -q get wireless.radio0.path 2>/dev/null)
+	[ -n "$_band" ] || return 0
+	case "$_band" in
+		5g) _rad=1 ;;
+		*)  _rad=0 ;;
+	esac
+	_iface="phy${_rad}-ap0"
+	[ -e "/sys/class/ieee80211/$_iface" ] || return 0
+	_ch=$(iw dev "$_iface" scan 2>/dev/null | awk -v ssid="$_want" '
+		/^BSS /{f=""}
+		/freq:/{f=$2}
+		/SSID:/{n=substr($0, index($0,":")+2)
+		       if(n==ssid && f!=""){printf "%d\n", (f+0.5)/5; exit}}')
+	[ -n "$_ch" ] || return 0
+	if [ "$(uci -q get wireless.radio${_rad}.channel)" != "$_ch" ]; then
+		echo "  radio${_rad}: channel -> $_ch (to match $_want)"
+		uci -q set wireless.radio${_rad}.channel="$_ch"
+	fi
+	return 0
+}
+
+sync_channel "$UPLINK1_BAND" "$UPLINK1_SSID"
+sync_channel "$UPLINK2_BAND" "$UPLINK2_SSID"
+uci -q commit wireless
+
+# ------------------------------------------------------------- primary uplink
+if [ -n "$UPLINK1_KEY" ]; then UPLINK1_ENC="psk2"; else UPLINK1_ENC="none"; fi
+uci -q delete wireless.uplink1
+uci -q set wireless.uplink1='wifi-iface'
+uci -q set wireless.uplink1.device="radio$( [ "$UPLINK1_BAND" = "5g" ] && echo 1 || echo 0 )"
+uci -q set wireless.uplink1.mode='sta'
+uci -q set wireless.uplink1.network='wan'
+uci -q set wireless.uplink1.ssid="$UPLINK1_SSID"
+uci -q set wireless.uplink1.encryption="$UPLINK1_ENC"
+[ -n "$UPLINK1_KEY" ] && uci -q set wireless.uplink1.key="$UPLINK1_KEY"
+uci -q set wireless.uplink1.disabled='0'
+
+# A WAN interface that was 'wan' on ethernet must not linger alongside this.
+uci -q delete network.wan.device 2>/dev/null
+uci -q set network.wan.proto='dhcp'
+uci -q set network.wan.metric="${UPLINK1_METRIC:-10}"
+uci -q set network.wan.auto='1'
+
+# ------------------------------------------------------------ standby uplink
+if [ -n "${UPLINK2_SSID:-}" ]; then
+	if [ -n "$UPLINK2_KEY" ]; then UPLINK2_ENC="psk2"; else UPLINK2_ENC="none"; fi
+	uci -q delete wireless.uplink2
+	uci -q set wireless.uplink2='wifi-iface'
+	uci -q set wireless.uplink2.device="radio$( [ "$UPLINK2_BAND" = "5g" ] && echo 1 || echo 0 )"
+	uci -q set wireless.uplink2.mode='sta'
+	uci -q set wireless.uplink2.network='wwan2'
+	uci -q set wireless.uplink2.ssid="$UPLINK2_SSID"
+	uci -q set wireless.uplink2.encryption="$UPLINK2_ENC"
+	[ -n "$UPLINK2_KEY" ] && uci -q set wireless.uplink2.key="$UPLINK2_KEY"
+	uci -q set wireless.uplink2.disabled='0'
+
+	uci -q delete network.wwan2
+	uci -q set network.wwan2='interface'
+	uci -q set network.wwan2.proto='dhcp'
+	uci -q set network.wwan2.metric="${UPLINK2_METRIC:-20}"
+	# auto=0 would stop netifd creating the station vdev at all, so the
+	# standby would have to rediscover the network on every failover. Leave it
+	# on: the metric is what keeps it out of the way.
+	uci -q set network.wwan2.auto='1'
+fi
+
+uci -q commit wireless
+uci -q commit network
+touch /etc/v18-uplink.applied
+exit 0

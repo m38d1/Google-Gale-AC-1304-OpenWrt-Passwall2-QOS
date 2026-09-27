@@ -1,0 +1,182 @@
+#!/bin/sh
+# ============================================================================
+# zz-passwall2-tuned — PassWall2 baseline, Iran-direct + auto-failover balancer
+#
+# Replaces the v1 "zz-passwall-tuned" from v16.x. Same guard idea: never
+# clobber a config that already has nodes, so a sysupgrade that keeps the
+# overlay cannot wipe working subscriptions.
+#
+# Why these settings and not the v1 ones
+# -------------------------------------
+#   * target is passwall2 (separate UCI file) — the v1 /etc/config/passwall is
+#     left untouched so a rollback stays possible
+#   * geosite/geoip come from Chocolate4U/Iran-v2ray-rules, because the stock
+#     dataset has NO "ir" category: `geosite:ir` fails to parse and xray refuses
+#     to start. Verified on 24.10.8.
+#   * Russia rules were dropped: that dataset has no ru-blocked either, and
+#     nothing in this list needs it.
+#   * write_ipset_direct stays 1, but only works once dnsmasq has nftset
+#     support — see zz-deps-dnsmasq.
+# ============================================================================
+[ -e /etc/passwall2-tuned.applied ] && exit 0
+[ -n "$(uci -q show passwall2 2>/dev/null | grep '=nodes')" ] && {
+	touch /etc/passwall2-tuned.applied
+	exit 0
+}
+
+uci -q import passwall2 <<'EOF'
+
+config global
+	option enabled '1'
+	option node_socks_port '1070'
+	option localhost_proxy '1'
+	option client_proxy '1'
+	option socks_enabled '0'
+	option acl_enable '0'
+	option node 'rulenode'
+	option direct_dns_protocol 'auto'
+	option direct_dns_query_strategy 'UseIP'
+	option remote_dns_protocol 'tcp'
+	option remote_dns '1.1.1.1'
+	option remote_dns_query_strategy 'UseIPv4'
+	option dns_hosts 'cloudflare-dns.com 1.1.1.1
+dns.google.com 8.8.8.8'
+	option log_node '1'
+	option loglevel 'warning'
+	option remote_dns_detour 'remote'
+	option dns_redirect '1'
+
+config global_haproxy
+	option balancing_enable '0'
+
+config global_delay
+	option start_daemon '1'
+	option start_delay '60'
+
+config global_forwarding
+	option tcp_redir_ports '1:65535'
+	option udp_redir_ports '1:65535'
+	option accept_icmp '0'
+	option prefer_nft '1'
+	option tcp_proxy_way 'redirect'
+	option ipv6_tproxy '0'
+
+config global_xray
+	option sniffing_override_dest '0'
+
+config global_other
+	option auto_detection_time 'tcping'
+	option show_node_info '1'
+
+config global_rules
+	option geosite_update '1'
+	option geoip_update '1'
+	option v2ray_location_asset '/usr/share/v2ray/'
+	option geoip_url 'https://github.com/Chocolate4U/Iran-v2ray-rules/releases/latest/download/geoip.dat'
+	option geosite_url 'https://github.com/Chocolate4U/Iran-v2ray-rules/releases/latest/download/geosite.dat'
+
+config global_app
+	option geoview_file '/usr/bin/geoview'
+	option xray_file '/usr/bin/xray'
+	option sing_box_file '/usr/bin/sing-box'
+
+config global_subscribe
+	option filter_keyword_mode '1'
+	list filter_discard_list '距离下次重置剩余'
+	list filter_discard_list '套餐到期'
+	list filter_discard_list '过期时间'
+	list filter_discard_list '剩余流量'
+	list filter_discard_list 'QQ群'
+	list filter_discard_list '官网'
+
+config global_singbox
+
+# ---------------------------------------------------------------- shunt node
+# One shunt node drives every rule below. shunt_group is empty on purpose:
+# a shunt node activates only the rules whose `group` matches its own
+# shunt_group, so leaving the rules in their default (empty) group is what
+# makes all of them apply at the same time.
+config nodes 'rulenode'
+	option remarks 'rulenode'
+	option type 'Xray'
+	option protocol '_shunt'
+	option PrivateIP '_direct'
+	option default_node 'balancenode'
+	option domainStrategy 'IPOnDemand'
+	option domainMatcher 'hybrid'
+	option write_ipset_direct '1'
+	option enable_geoview_ip '1'
+	option shunt_group ''
+	option Iran '_direct'
+	option CN '_direct'
+	option DirectGame '_direct'
+	option DirectFront '_direct'
+	option ProxyGame '_default'
+	option ProxyFront '_default'
+
+# ------------------------------------------------------- failover balancer
+# leastPing picks the healthiest of the subscription nodes; fallback_node
+# '_direct' means that if every node dies the router still has internet, just
+# unproxied. That is deliberate: a working direct link beats a dead tunnel, and
+# netled.sh turns the LED green to make the degradation visible.
+config nodes 'balancenode'
+	option remarks 'Balance-Auto'
+	option type 'Xray'
+	option protocol '_balancing'
+	option balancingStrategy 'leastPing'
+	option probeInterval '1h'
+	option fallback_node '_direct'
+
+# ------------------------------------------------------------------- rules
+# No `group` option on any of these, so they all belong to the default group
+# and are all active under the shunt node above.
+config shunt_rules 'Iran'
+	option remarks 'Iran'
+	option network 'tcp,udp'
+	option domain_list 'geosite:ir'
+	option ip_list 'geoip:ir'
+
+config shunt_rules 'CN'
+	option remarks 'CN'
+	option network 'tcp,udp'
+	option domain_list 'geosite:cn'
+	option ip_list 'geoip:cn'
+
+config shunt_rules 'DirectGame'
+	option remarks 'DirectGame'
+	option network 'tcp,udp'
+	option domain_list 'cm.steampowered.com
+steamcloud-taiwan.storage.googleapis.com
+steamcloud-eu.storage.googleapis.com
+domain:blizzard.com
+geosite:category-games'
+
+config shunt_rules 'DirectFront'
+	option remarks 'DirectFront'
+	option network 'tcp,udp'
+	option domain_list 'domain:ip233.cn'
+
+config shunt_rules 'ProxyGame'
+	option remarks 'ProxyGame'
+	option network 'tcp,udp'
+	option domain_list 'steamcommunity.com
+store.steampowered.com
+help.steampowered.com
+steamcdn-a.akamai.steamstatic.com
+avatars.akamai.steamstatic.com
+cdn.cloudflare.steamstatic.com
+domain:checkout.steampowered.com
+geosite:category-games'
+
+config shunt_rules 'ProxyFront'
+	option remarks 'ProxyFront'
+	option network 'tcp,udp'
+	option domain_list 'domain:www.gstatic.com
+domain:ssl.gstatic.com
+domain:fonts.gstatic.com'
+
+EOF
+
+uci -q commit passwall2
+touch /etc/passwall2-tuned.applied
+exit 0

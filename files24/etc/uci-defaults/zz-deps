@@ -1,0 +1,41 @@
+#!/bin/sh
+# Runtime dependencies that the official 24.10.8 feeds get wrong for this setup.
+#
+# 1) dnsmasq -> dnsmasq-full
+#    PassWall2's shunt writes direct-domain results into an nftset via dnsmasq
+#    (its ACL instance runs with an "nftset=" directive). OpenWrt's stock
+#    dnsmasq 2.93 is compiled "no-nftset", so that instance refuses to start:
+#        dnsmasq: recompile with HAVE_NFTSET defined to enable nftset directives
+#    It crash-loops, the DNS redirect port 2004 never opens, and every lookup
+#    on the router fails -- including the node server domains, so no tunnel can
+#    ever come up. dnsmasq-full is built with nftset and fixes it.
+#
+#    PassWall2's own capability probe is fooled by this, which is why the
+#    symptom is so confusing: it tests the dnsmasq version string with
+#    `grep -w nftset`, and "no-nftset" contains the word nftset, so it believes
+#    support exists. Do not patch app.sh; install dnsmasq-full instead.
+#
+# 2) nftables TPROXY modules
+#    Without kmod-nft-socket and kmod-nft-tproxy, transparent proxy logs
+#    "missing basic dependency" and silently falls back to no proxy at all.
+[ -e /etc/v18-deps.applied ] && exit 0
+
+if ! dnsmasq -v 2>&1 | head -3 | grep -q 'no-nftset'; then
+	echo "dnsmasq already has nftset support"
+else
+	echo "stock dnsmasq lacks nftset -> installing dnsmasq-full"
+	# dnsmasq and dnsmasq-full ship the same files, so the plain one has to go
+	# first or opkg reports a clash.
+	/etc/init.d/passwall2 stop >/dev/null 2>&1
+	opkg remove dnsmasq >/dev/null 2>&1
+	if ! opkg install dnsmasq-full; then
+		echo "WARNING: dnsmasq-full install failed; transparent proxy will not start"
+	fi
+	rm -f /etc/config/dhcp-opkg 2>/dev/null
+	/etc/init.d/dnsmasq restart >/dev/null 2>&1
+fi
+
+opkg install kmod-nft-socket kmod-nft-tproxy >/dev/null 2>&1
+
+touch /etc/v18-deps.applied
+exit 0

@@ -1,0 +1,15 @@
+#!/bin/sh
+# LAN addressing. Runs on first boot only.
+[ -e /etc/v18-lan.applied ] && exit 0
+
+uci -q set network.lan.proto='static'
+uci -q set network.lan.ipaddr='192.168.10.1'
+uci -q set network.lan.netmask='255.255.255.0'
+
+# Without this the router advertises a ULA prefix and hands out IPv6 addresses,
+# which is noise for a single-stack IPv4 LAN.
+uci -q set network.lan.ip6assign=''
+
+uci -q commit network
+touch /etc/v18-lan.applied
+exit 0

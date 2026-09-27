@@ -1,0 +1,255 @@
+name: build firmware
+
+# Builds the v18 sysupgrade image for one device only: Google Wifi (Gale).
+# Pushing a v* tag builds the image and attaches it to a GitHub Release, which
+# is how this repo ships binaries (.gitignore keeps *.bin out of git).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build and publish (e.g. v18)'
+        required: true
+      draft:
+        description: 'Create the release as a draft'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  OPENWRT_RELEASE: '24.10.8'
+  TARGET: 'ipq40xx/chromium'
+  PROFILE: 'google_wifi'
+  # opkg architecture string; also the PassWall2 release asset suffix
+  PKG_ARCH: 'arm_cortex-a7_neon-vfpv4'
+  # Xray release asset for the Gale's CPU (ARMv7, 32-bit)
+  XRAY_VERSION: '26.9.9'
+  XRAY_MIN: '26.7.11'
+  XRAY_ASSET: 'Xray-linux-arm32-v7a.zip'
+  XRAY_SHA256: '5b2a9e2767c0197f7bd41c2db133f91440e845771e621178e0fd2b8520228e5f'
+  PASSWALL2_VERSION: '26.9.16'
+
+jobs:
+  build:
+    name: sysupgrade.bin
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "building $TAG"
+
+      # ------------------------------------------------------------------
+      # 1. ImageBuilder
+      # ------------------------------------------------------------------
+      - name: Fetch ImageBuilder
+        run: |
+          set -euo pipefail
+          URL="https://downloads.openwrt.org/releases/${OPENWRT_RELEASE}/targets/${TARGET}"
+          IB="openwrt-imagebuilder-${OPENWRT_RELEASE}-${TARGET}.Linux-x86_64.tar.zst"
+          curl -fSL --retry 5 -o "$IB" "$URL/$IB"
+          curl -fSL --retry 5 -o sha256sums "$URL/sha256sums"
+          grep " $IB\$" sha256sums | sed "s|$IB||" | sha256sum -c -
+          tar --zstd -xf "$IB"
+          mv "openwrt-imagebuilder-${OPENWRT_RELEASE}-${TARGET}.Linux-x86_64" imagebuilder
+          echo "ImageBuilder ready"
+
+      - name: Verify the profile exists
+        run: |
+          set -euo pipefail
+          cd imagebuilder
+          make info | tee /tmp/ib-info.txt
+          if ! grep -qE "^\s*${PROFILE}:" /tmp/ib-info.txt; then
+            echo "::error::profile '${PROFILE}' is not offered by this ImageBuilder"
+            exit 1
+          fi
+          echo "profile ${PROFILE} confirmed"
+
+      # ------------------------------------------------------------------
+      # 2. Xray
+      #    The official 24.10.8 feed ships xray-core 25.1.30, but PassWall2
+      #    26.9.x emits a flat VLESS "settings" object and xray 25.x still
+      #    wants the nested "vnext" form -- it dies with
+      #    'VLESS settings: "vnext" is empty'. 26.7.11 is the hard floor:
+      #    older cores also refuse the config outright with
+      #    'this config must be run on version 26.7.11 or higher'.
+      #    The newer core is dropped in via FILES=, which prepare_rootfs copies
+      #    AFTER package_install, so it overwrites the packaged binary.
+      # ------------------------------------------------------------------
+      - name: Fetch and stage Xray ${XRAY_VERSION}
+        run: |
+          set -euo pipefail
+          URL="https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/${XRAY_ASSET}"
+          curl -fSL --retry 5 -o xray.zip "$URL"
+          echo "${XRAY_SHA256}  xray.zip" | sha256sum -c -
+          rm -rf xray-x && mkdir xray-x
+          unzip -q xray.zip -d xray-x
+          mkdir -p stage/usr/bin
+          # only the binary: the geo files in the zip are the upstream ones,
+          # which have no "ir" category
+          install -m 0755 xray-x/xray stage/usr/bin/xray
+          stage/usr/bin/xray version
+
+      - name: Refuse a core older than ${XRAY_MIN}
+        run: |
+          set -euo pipefail
+          VER=$(stage/usr/bin/xray version | head -1 \
+                | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+          echo "xray reports: ${VER:-unparseable}; need >= ${XRAY_MIN}"
+          [ -n "$VER" ] || { echo "::error::cannot read the xray version"; exit 1; }
+          if [ "$(printf '%s\n%s\n' "${XRAY_MIN}" "$VER" | sort -V | head -1)" != "${XRAY_MIN}" ]; then
+            echo "::error::xray ${VER} is older than the required ${XRAY_MIN}"
+            exit 1
+          fi
+          echo "xray ${VER} accepted"
+
+      # ------------------------------------------------------------------
+      # 3. PassWall2 packages (not present in any official feed)
+      # ------------------------------------------------------------------
+      - name: Fetch PassWall2 ${PASSWALL2_VERSION} packages
+        run: |
+          set -euo pipefail
+          REL="https://github.com/Openwrt-Passwall/openwrt-passwall2/releases/download/${PASSWALL2_VERSION}-1"
+          curl -fSL --retry 5 -o pw2.zip "${REL}/packages_ipk_${PKG_ARCH}.zip"
+          curl -fSL --retry 5 -o luci-app-passwall2.ipk \
+            "${REL}/luci-app-passwall2_${PASSWALL2_VERSION}-r1_all.ipk"
+          rm -rf pw2 && mkdir pw2
+          unzip -q pw2.zip -d pw2
+          cp pw2/*.ipk luci-app-passwall2.ipk imagebuilder/packages/
+          (cd imagebuilder/packages && ls -1 *.ipk | sort > ../staged.list)
+          echo "staged $(wc -l < ../staged.list) packages"
+
+      - name: Index staged packages and resolve their names
+        id: indexed
+        run: |
+          set -euo pipefail
+          cd imagebuilder
+          make package_index
+          # Read the names out of the generated index rather than parsing the
+          # filenames: the version/arch suffixes vary
+          # (2025.08.09-r1_arm_cortex-a7_neon-vfpv4, 202609040655.1_all,
+          # 26.9.16-r1_all) and a filename regex is easy to get subtly wrong.
+          awk '/^Package: /{p=$2} /^Filename: /{if(p!=""){print p" "$2; p=""}}' \
+            packages/Packages | sort -u > indexed.txt
+          : > staged-names.txt
+          while read -r f; do
+            n=$(awk -v w=" $f" 'index($0, w) {print $1; exit}' indexed.txt || true)
+            if [ -z "$n" ]; then
+              echo "::error::$f did not reach the package index"
+              exit 1
+            fi
+            echo "$n" >> staged-names.txt
+          done < staged.list
+          sort -u -o staged-names.txt staged-names.txt
+          echo "resolved $(wc -l < staged-names.txt) package names:"
+          cat staged-names.txt
+          echo "names=$(tr '\n' ' ' < staged-names.txt)" >> "$GITHUB_OUTPUT"
+
+      # ------------------------------------------------------------------
+      # 4. Overlay
+      # ------------------------------------------------------------------
+      - name: Assemble the FILES overlay
+        run: |
+          set -euo pipefail
+          cp -a files24/. stage/
+          chmod 0755 stage/etc/uci-defaults/* stage/root/*.sh 2>/dev/null || true
+          find stage -type f | sort | tee /tmp/staged-files.txt
+          echo "--- $(wc -l < /tmp/staged-files.txt) files staged ---"
+
+      - name: Lint the overlay before building
+        run: |
+          set -euo pipefail
+          bad=0
+          while read -r f; do
+            head -1 "$f" | grep -q '^#! */bin/sh' || { echo "::error::$f has no sh shebang"; bad=1; }
+            if ! sh -n "$f"; then echo "::error::$f fails sh -n"; bad=1; fi
+          done < <(find stage -type f \( -name '*.sh' -o -path '*/uci-defaults/*' \))
+          [ "$bad" = 0 ] || exit 1
+          echo "overlay lint clean"
+
+      - name: Run the repository's own overlay tests
+        run: sh tests/validate-overlay.sh
+
+      # ------------------------------------------------------------------
+      # 5. Build
+      # ------------------------------------------------------------------
+      - name: Resolve the package list
+        id: pkgs
+        run: |
+          set -euo pipefail
+          # dnsmasq-full for nftset (stock dnsmasq is built without it, which
+          # stops PassWall2's DNS instance and with it every lookup);
+          # the tproxy modules; curl and CA certs for the LED probes; geoview
+          # for the shunt's geo handling; the cores from the official feed.
+          WANT="dnsmasq-full kmod-nft-socket kmod-nft-tproxy curl ca-bundle \
+                ca-certificates xray-core sing-box"
+          echo "packages=$WANT ${{ steps.indexed.outputs.names }}" \
+            | tr -s ' ' >> "$GITHUB_OUTPUT"
+          grep '^packages=' "$GITHUB_OUTPUT"
+
+      - name: Build the image
+        run: |
+          set -euo pipefail
+          cd imagebuilder
+          make image \
+            PROFILE="$PROFILE" \
+            PACKAGES="${{ steps.pkgs.outputs.packages }}" \
+            FILES="$GITHUB_WORKSPACE/stage" \
+            BIN_DIR="$GITHUB_WORKSPACE/out" \
+            EXTRA_IMAGE_NAME="${{ steps.tag.outputs.tag }}"
+          ls -lh "$GITHUB_WORKSPACE/out"
+
+      - name: Locate and checksum the sysupgrade image
+        id: artifact
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/out"
+          IMG=$(ls -1 *sysupgrade.bin | head -1)
+          [ -n "$IMG" ] || { echo "::error::no sysupgrade.bin was produced"; ls -la; exit 1; }
+          echo "name=$IMG" >> "$GITHUB_OUTPUT"
+          sha256sum "$IMG" | tee "$IMG.sha256"
+          { echo "### $IMG"; echo; echo '```'; cat "$IMG.sha256"; echo '```'; echo;
+            echo "device \`$PROFILE\` · $TARGET · OpenWrt $OPENWRT_RELEASE · Xray $XRAY_VERSION · PassWall2 $PASSWALL2_VERSION"; \
+          } > "$IMG.sha256.md"
+
+      # ------------------------------------------------------------------
+      # 6. Publish
+      # ------------------------------------------------------------------
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          draft: ${{ inputs.draft || false }}
+          fail_on_unmatched_files: true
+          files: |
+            out/*sysupgrade.bin
+            out/*.sha256
+            out/*.sha256.md
+          body_path: out/${{ steps.artifact.outputs.name }}.sha256.md
+
+      - name: Summary
+        run: |
+          {
+            echo "### ${{ steps.tag.outputs.tag }} built"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| device | Google Wifi (Gale) |"
+            echo "| profile | \`$PROFILE\` |"
+            echo "| base | $TARGET · OpenWrt $OPENWRT_RELEASE |"
+            echo "| core | Xray $XRAY_VERSION (feed ships 25.1.30, too old) |"
+            echo "| proxy | PassWall2 $PASSWALL2_VERSION · Iran-direct shunt |"
+            echo
+            echo '```'
+            cat out/*.sha256
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

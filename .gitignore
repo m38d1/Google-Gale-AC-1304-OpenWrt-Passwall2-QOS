@@ -1,0 +1,20 @@
+# Keep firmware and private material out of git; they ship as Release assets.
+*.bin
+*.sha256
+
+# Private node data must never be committed.
+*pre-v*-backup.tar.gz
+*backup*.tar.gz
+*backup*.bundle
+
+# PassWall subscription payloads
+*.ipk
+payload/
+
+# local noise
+*.log
+*.tmp
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

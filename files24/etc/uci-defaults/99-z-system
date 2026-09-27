@@ -1,0 +1,15 @@
+#!/bin/sh
+# Router identity. Runs on first boot only (uci-defaults).
+[ -e /etc/v18-system.applied ] && exit 0
+
+uci -q set system.@system[0].hostname='Gale'
+uci -q set system.@system[0].zonename='Asia/Tehran'
+
+# IRST-3:30 is a POSIX TZ string, not a zoneinfo name. Iran has had no DST
+# since 2022, so this resolves correctly with no tzdata package installed --
+# which matters, because OpenWrt 24.10 ships no tzdata in any feed.
+uci -q set system.@system[0].timezone='IRST-3:30'
+
+uci -q commit system
+touch /etc/v18-system.applied
+exit 0
