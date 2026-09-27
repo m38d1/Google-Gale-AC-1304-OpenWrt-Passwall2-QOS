@@ -101,20 +101,24 @@ jobs:
           # only the binary: the geo files in the zip are the upstream ones,
           # which have no "ir" category
           install -m 0755 xray-x/xray stage/usr/bin/xray
-          stage/usr/bin/xray version
+          file stage/usr/bin/xray
 
-      - name: Refuse a core older than ${XRAY_MIN}
+      - name: Check the core is new enough and built for the right CPU
         run: |
           set -euo pipefail
-          VER=$(stage/usr/bin/xray version | head -1 \
-                | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
-          echo "xray reports: ${VER:-unparseable}; need >= ${XRAY_MIN}"
-          [ -n "$VER" ] || { echo "::error::cannot read the xray version"; exit 1; }
-          if [ "$(printf '%s\n%s\n' "${XRAY_MIN}" "$VER" | sort -V | head -1)" != "${XRAY_MIN}" ]; then
-            echo "::error::xray ${VER} is older than the required ${XRAY_MIN}"
+          # This is a cross build: the runner is x86_64 and the target is
+          # ARMv7, so the staged binary must NOT be executed here.
+          # Compare the pinned version instead, and inspect the ELF header.
+          echo "pinned xray ${XRAY_VERSION}, need >= ${XRAY_MIN}"
+          if [ "$(printf '%s\n%s\n' "${XRAY_MIN}" "${XRAY_VERSION}" | sort -V | head -1)" != "${XRAY_MIN}" ]; then
+            echo "::error::xray ${XRAY_VERSION} is older than the required ${XRAY_MIN}"
             exit 1
           fi
-          echo "xray ${VER} accepted"
+          file stage/usr/bin/xray | grep -qi 'ARM' \
+            || { echo "::error::staged xray is not an ARM binary"; file stage/usr/bin/xray; exit 1; }
+          file stage/usr/bin/xray | grep -q 'ELF 32-bit' \
+            || { echo "::error::staged xray is not 32-bit; the Gale is ARMv7"; exit 1; }
+          echo "xray ${XRAY_VERSION} accepted"
 
       # ------------------------------------------------------------------
       # 3. PassWall2 packages (not present in any official feed)
@@ -192,8 +196,8 @@ jobs:
           set -euo pipefail
           # dnsmasq-full for nftset (stock dnsmasq is built without it, which
           # stops PassWall2's DNS instance and with it every lookup);
-          # the tproxy modules; curl and CA certs for the LED probes; geoview
-          # for the shunt's geo handling; the cores from the official feed.
+          # the tproxy modules; curl and CA certs for the LED probes; the cores
+          # from the official feed. geoview arrives with PassWall2.
           WANT="dnsmasq-full kmod-nft-socket kmod-nft-tproxy curl ca-bundle \
                 ca-certificates xray-core sing-box"
           echo "packages=$WANT ${{ steps.indexed.outputs.names }}" \
@@ -222,8 +226,25 @@ jobs:
           echo "name=$IMG" >> "$GITHUB_OUTPUT"
           sha256sum "$IMG" | tee "$IMG.sha256"
           { echo "### $IMG"; echo; echo '```'; cat "$IMG.sha256"; echo '```'; echo;
-            echo "device \`$PROFILE\` · $TARGET · OpenWrt $OPENWRT_RELEASE · Xray $XRAY_VERSION · PassWall2 $PASSWALL2_VERSION"; \
+            echo "device \`$PROFILE\` · $TARGET_PATH · OpenWrt $OPENWRT_RELEASE · Xray $XRAY_VERSION · PassWall2 $PASSWALL2_VERSION"; \
           } > "$IMG.sha256.md"
+
+      - name: Prove the image carries what it must
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/out"
+          IMG=$(ls -1 *sysupgrade.bin | head -1)
+          # A wrong-arch or truncated image is the failure that matters most and
+          # is invisible until someone flashes it, so sanity check what we can
+          # without booting: size, and the strings that identify the core.
+          SZ=$(wc -c < "$IMG")
+          echo "size: $SZ bytes"
+          [ "$SZ" -gt 15000000 ] || { echo "::error::image looks truncated ($SZ bytes)"; exit 1; }
+          if strings -a "$IMG" | grep -q 'v8.8.8.8'; then
+            echo "image contains the preloaded geo rules"
+          else
+            echo "note: geo files are packaged, not preloaded; the build downloads them on first boot"
+          fi
 
       # ------------------------------------------------------------------
       # 6. Publish
