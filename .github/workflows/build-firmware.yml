@@ -151,7 +151,17 @@ jobs:
         run: |
           set -euo pipefail
           cd imagebuilder
+          # _check_keys first. CONFIG_SIGNATURE_CHECK=y, so package_index ends
+          # with `usign -S -m Packages -s $(BUILD_KEY)`, and that key only
+          # exists once _check_keys has run. The `image` target calls it before
+          # _call_image; calling package_index on its own skips that step, usign
+          # fails on the missing key, and the whole target dies with its output
+          # redirected to /dev/null.
+          make _check_keys
           make package_index
+          # package_index hides its output, so confirm the index really grew
+          # before trusting it.
+          [ -s packages/Packages ] || { echo "::error::package index is empty"; exit 1; }
           # Read the names out of the generated index rather than parsing the
           # filenames: the version/arch suffixes vary
           # (2025.08.09-r1_arm_cortex-a7_neon-vfpv4, 202609040655.1_all,
